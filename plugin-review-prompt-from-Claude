@@ -1,0 +1,1018 @@
+# WordPress Plugin Review Compliance Scanner
+
+## AI Model Instructions
+
+You are a WordPress Plugin Security and Compliance Auditor. Your task is to thoroughly scan a WordPress plugin codebase for issues that would cause rejection by the WordPress.org Plugin Review Team.
+
+**IMPORTANT**: Only report issues that are FOUND. Do not list items that pass inspection. For each issue found, provide the exact file path, line number, and the problematic code snippet.
+
+---
+
+## SCANNING CHECKLIST
+
+Scan the entire plugin codebase systematically for the following 31 categories of issues:
+
+---
+
+### 1. MISSING COMPOSER.JSON FILE
+
+**What to Check:**
+- If the plugin uses Composer (look for `vendor/` directory or `composer.lock`), verify `composer.json` exists in the plugin root
+- The file should describe dependencies and metadata
+
+**How to Detect:**
+```bash
+# Check if vendor directory exists but composer.json is missing
+find . -type d -name "vendor" -print
+find . -name "composer.json" -print
+```
+
+**Report Format:**
+```
+ISSUE: Missing composer.json
+LOCATION: Plugin root directory
+EVIDENCE: Found vendor/ directory at [path] but no composer.json file exists
+```
+
+---
+
+### 2. MISSING SOURCE CODE FOR COMPRESSED/MINIFIED FILES
+
+**What to Check:**
+- Any `.min.js`, `.min.css` files or files containing `webpackBootstrap`
+- Bundled/minified files in `build/`, `dist/`, `assets/` directories
+- Missing source maps or original source files
+- No documentation in readme about build tools or source code location
+
+**Patterns to Search:**
+```
+/******/ (() => { // webpackBootstrap
+.min.js
+.min.css
+```
+
+**Report Format:**
+```
+ISSUE: No publicly documented source for compressed content
+FILE: [path/to/file.js]
+LINE: [line number]
+EVIDENCE: [show webpack bootstrap or minified code snippet]
+REQUIRED: Include source code OR link to public repository in readme
+```
+
+---
+
+### 3. CALLING CORE LOADING FILES DIRECTLY
+
+**What to Check:**
+Files that directly include/require WordPress core files:
+- `wp-config.php`
+- `wp-blog-header.php`
+- `wp-load.php`
+- `wp-admin/includes/*.php` (without proper context)
+
+**Patterns to Search:**
+```php
+include ABSPATH
+require ABSPATH
+include_once ABSPATH
+require_once ABSPATH
+wp-load.php
+wp-config.php
+wp-blog-header.php
+```
+
+**Exceptions:**
+- Using `require_once` for specific admin files AND immediately using a function from that file is sometimes acceptable
+
+**Report Format:**
+```
+ISSUE: Calling core loading files directly
+FILE: [path]
+LINE: [number]
+CODE: [the include/require statement]
+RECOMMENDATION: Use WordPress hooks and actions instead, or create REST/AJAX endpoints
+```
+
+---
+
+### 4. INCORRECT FILE/DIRECTORY PATH REFERENCES
+
+**What to Check:**
+- Hardcoded paths using WordPress constants directly
+- `WP_CONTENT_DIR`, `ABSPATH` used for path building instead of proper functions
+
+**Problematic Patterns:**
+```php
+WP_CONTENT_DIR . '/themes/'
+WP_CONTENT_DIR . '/plugins/'
+ABSPATH . 'wp-content/'
+```
+
+**Correct Functions to Use:**
+- `plugin_dir_path()`
+- `plugin_dir_url()`
+- `plugins_url()`
+- `wp_upload_dir()`
+
+**Report Format:**
+```
+ISSUE: Incorrect file/directory location determination
+FILE: [path]
+LINE: [number]
+CODE: [problematic code]
+FIX: Use [appropriate function] instead
+```
+
+---
+
+### 5. UNSAFE SQL CALLS
+
+**What to Check:**
+- Direct `mysqli` or `PDO` connections instead of `$wpdb`
+- SQL queries without `$wpdb->prepare()`
+- Interpolated variables in SQL strings
+- Queries using user input without proper escaping
+
+**Dangerous Patterns:**
+```php
+new mysqli(
+new PDO(
+$wpdb->query("SELECT * FROM $table WHERE id = $id")
+$wpdb->get_results("SELECT * FROM {$table_name}")
+"SELECT * FROM $table_name LIMIT $offset, $per_page"
+"UPDATE $table_name SET ... WHERE id IN (" . implode(',', $ids) . ")"
+```
+
+**Report Format:**
+```
+ISSUE: Unsafe SQL call - SQL Injection vulnerability
+FILE: [path]
+LINE: [number]
+CODE: [problematic SQL]
+VULNERABILITY: [explain the risk]
+FIX: Use $wpdb->prepare() with placeholders
+```
+
+---
+
+### 6. TEXT DOMAIN MISMATCH
+
+**What to Check:**
+- Text domain in translation functions must match plugin slug
+- Check all `__()`, `_e()`, `_n()`, `_x()`, `esc_html__()`, `esc_attr__()`, etc.
+- Compare against the expected plugin slug from the directory URL
+
+**How to Detect:**
+```php
+__('text', 'wrong-domain')
+esc_html__('text', 'incorrect-slug')
+```
+
+**Report Format:**
+```
+ISSUE: Text domain does not match plugin slug
+EXPECTED DOMAIN: [plugin-slug]
+FOUND DOMAIN: [actual-domain]
+OCCURRENCES: [number] elements using wrong domain
+FILES: [list files]
+```
+
+---
+
+### 7. PROCESSING ENTIRE INPUT ARRAYS
+
+**What to Check:**
+- Iterating over entire `$_POST`, `$_GET`, `$_REQUEST`, `$_FILES`
+- Using `file_get_contents('php://input')` without specific parsing
+- Processing all input instead of specific expected keys
+
+**Problematic Patterns:**
+```php
+foreach ($_POST as $key => $value)
+foreach ($_REQUEST as ...
+$input = file_get_contents('php://input');
+$input = $_REQUEST;
+$data = $_POST;
+```
+
+**Report Format:**
+```
+ISSUE: Processing entire input array
+FILE: [path]
+LINE: [number]
+CODE: [problematic code]
+FIX: Only access specific expected keys: $_POST['specific_key']
+```
+
+---
+
+### 8. UNESCAPED OUTPUT (XSS VULNERABILITIES)
+
+**What to Check:**
+- Variables echoed without escaping
+- Options/settings output without escaping
+- Dynamic HTML generation without proper escaping
+- `echo $variable` without `esc_html()`, `esc_attr()`, etc.
+
+**Dangerous Patterns:**
+```php
+echo $variable;
+echo $options['setting'];
+wp_add_inline_script('handle', $unescaped_js);
+wp_add_inline_style('handle', $unescaped_css);
+echo $xml->asXML();
+```
+
+**Required Escaping Functions:**
+- `esc_html()` - for HTML content
+- `esc_attr()` - for HTML attributes
+- `esc_url()` - for URLs
+- `esc_js()` - for inline JavaScript
+- `wp_kses()` or `wp_kses_post()` - for HTML with allowed tags
+
+**Report Format:**
+```
+ISSUE: Unescaped output - XSS vulnerability
+FILE: [path]
+LINE: [number]
+CODE: [problematic echo/output]
+FIX: Use [appropriate esc_*() function]
+```
+
+---
+
+### 9. GENERIC/SHORT PREFIX NAMES
+
+**What to Check:**
+- Function names, class names, constants, namespaces
+- Prefixes less than 4 characters
+- Using reserved prefixes: `__`, `wp_`, `_`
+- Generic option names, transient names
+- Non-unique filter/action hook names
+
+**Problematic Examples:**
+```php
+define('WA_PLUGIN_VERSION', ...)  // "WA" is too short
+function wa_something()           // Too short
+class WA_Plugin                   // Too short
+update_option('_master_archive_installed', ...) // Generic
+set_transient('edit_php_included', ...) // Generic, no prefix
+```
+
+**Report Format:**
+```
+ISSUE: Generic/short prefix name
+FILE: [path]
+LINE: [number]
+CODE: [problematic definition]
+PREFIX FOUND: [prefix] (length: [n] characters)
+REQUIREMENT: Prefix must be 4+ characters and unique to your plugin
+```
+
+---
+
+### 10. UNPREFIXED OPTIONS AND TRANSIENTS
+
+**What to Check:**
+- `update_option()` / `get_option()` with generic names
+- `set_transient()` / `get_transient()` with generic names
+- Options/transients that don't include the plugin prefix
+
+**Patterns to Search:**
+```php
+update_option('
+get_option('
+set_transient('
+get_transient('
+delete_option('
+delete_transient('
+```
+
+**Report Format:**
+```
+ISSUE: Unprefixed option/transient name
+FILE: [path]
+LINE: [number]
+CODE: [the option/transient call]
+FIX: Prefix with your unique plugin prefix: [prefix]_option_name
+```
+
+---
+
+### 11. STORED XSS VULNERABILITIES
+
+**What to Check:**
+- Data imported from external sources (Google Sheets, APIs, files)
+- User-submitted content stored and later displayed
+- Links, URLs, or HTML content not sanitized on input AND not escaped on output
+
+**Vulnerable Flow:**
+1. External data imported without sanitization
+2. Data stored in database
+3. Data displayed without escaping
+
+**Report Format:**
+```
+ISSUE: Stored XSS vulnerability
+FILE: [path]
+LINE: [number]
+FLOW: [describe data flow from input to storage to output]
+FIX: Sanitize on input using [function], escape on output using [function]
+```
+
+---
+
+### 12. MISSING DIRECT FILE ACCESS PROTECTION
+
+**What to Check:**
+- PHP files that contain executable code (not just class/function definitions)
+- Files missing the ABSPATH check at the top
+- Template files, AJAX handlers, standalone scripts
+
+**Required Protection:**
+```php
+<?php
+// Must be at the top of files with executable code
+if ( ! defined( 'ABSPATH' ) ) {
+    exit; // Exit if accessed directly
+}
+```
+
+**Or after namespace:**
+```php
+<?php
+namespace MyPlugin;
+
+if ( ! defined( 'ABSPATH' ) ) exit;
+```
+
+**Report Format:**
+```
+ISSUE: Missing direct file access protection
+FILE: [path]
+LINE: 1 (or after namespace)
+FIX: Add: if ( ! defined( 'ABSPATH' ) ) exit;
+```
+
+---
+
+### 13. UNSANITIZED INPUT DATA
+
+**What to Check:**
+- `$_POST`, `$_GET`, `$_REQUEST`, `$_SERVER`, `$_FILES` used without sanitization
+- User input passed to functions without validation
+- Missing `sanitize_*()` functions before processing
+
+**Dangerous Patterns:**
+```php
+$ip = $_SERVER['HTTP_CLIENT_IP'];
+$ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+$ip = $_SERVER['REMOTE_ADDR'];
+$tag = $_POST['tag'];
+$col = $_GET['col'];
+$file = $_GET['download_file'];
+```
+
+**Required Sanitization Functions:**
+- `sanitize_text_field()`
+- `sanitize_email()`
+- `sanitize_file_name()`
+- `absint()` for integers
+- `sanitize_url()` or `esc_url_raw()` for URLs
+- `wp_kses()` for HTML
+- `sanitize_key()` for keys/slugs
+
+**Report Format:**
+```
+ISSUE: Unsanitized input data
+FILE: [path]
+LINE: [number]
+CODE: [the problematic input access]
+FIX: Use [appropriate sanitize_*() function]
+```
+
+---
+
+### 14. OUTDATED THIRD-PARTY LIBRARIES
+
+**What to Check:**
+- Version numbers in library files
+- Known vulnerable versions
+- Libraries that haven't been updated
+
+**How to Detect:**
+```
+Search for version strings like:
+* Chart.js v3.7.1
+* jQuery v1.x.x
+* [Library] v[version]
+```
+
+**Report Format:**
+```
+ISSUE: Outdated third-party library
+FILE: [path]
+LINE: [number]
+LIBRARY: [name]
+CURRENT VERSION: [found version]
+RECOMMENDATION: Update to latest stable version
+```
+
+---
+
+### 15. COMBINED/RENAMED JAVASCRIPT LIBRARIES
+
+**What to Check:**
+- Core WordPress libraries (jQuery, jQuery UI, etc.) bundled in plugin
+- Libraries renamed or combined into single files
+- Multiple versions of same library in bundle
+
+**Problematic:**
+```javascript
+// Multiple Chart.js inclusions in one file
+* Chart.js v3.7.1
+```
+
+**Report Format:**
+```
+ISSUE: Combined/renamed JavaScript library
+FILE: [path]
+LINE: [number]
+LIBRARY: [name]
+FIX: Use wp_enqueue_script() with proper dependencies instead
+```
+
+---
+
+### 16. PERMALINK VS TEXT DOMAIN MISMATCH
+
+**What to Check:**
+- Plugin permalink (slug) from directory URL
+- Text domain used in translation functions
+- These must match exactly
+
+**Report Format:**
+```
+ISSUE: Plugin permalink does not match text domain
+PERMALINK: [plugin-slug]
+TEXT DOMAIN: [found-domain]
+FILES AFFECTED: [list]
+FIX: Change text domain to match permalink, or request permalink change
+```
+
+---
+
+### 17. USING CURL INSTEAD OF HTTP API
+
+**What to Check:**
+- Direct `curl_*` function calls in plugin code (not vendor libraries)
+- cURL handles instead of WordPress HTTP API
+
+**Problematic:**
+```php
+curl_init()
+curl_exec()
+curl_setopt()
+```
+
+**Correct Approach:**
+```php
+wp_remote_get()
+wp_remote_post()
+wp_remote_request()
+```
+
+**Report Format:**
+```
+ISSUE: Using cURL instead of WordPress HTTP API
+FILE: [path]
+LINE: [number]
+CODE: [curl function call]
+FIX: Use wp_remote_get(), wp_remote_post(), or wp_remote_request()
+NOTE: cURL in third-party vendor libraries is permitted
+```
+
+---
+
+### 18. DIRECT SCRIPT/STYLE OUTPUT (NOT ENQUEUED)
+
+**What to Check:**
+- `<script>` or `<style>` tags echoed directly
+- `echo "<script src=..."` patterns
+- Scripts loaded outside of wp_enqueue system
+
+**Problematic:**
+```php
+echo "<script src=\"" . plugin_dir_url() . "script.js\"></script>";
+echo '<script src="' . home_url('wp-includes/js/jquery/jquery.min.js') . '"></script>';
+```
+
+**Report Format:**
+```
+ISSUE: Scripts/styles not properly enqueued
+FILE: [path]
+LINE: [number]
+CODE: [the echo statement]
+FIX: Use wp_enqueue_script() or wp_enqueue_style() with proper hooks
+```
+
+---
+
+### 19. GENERIC DEFINES WITHOUT UNIQUE PREFIX
+
+**What to Check:**
+- `define()` statements with generic names
+- Constants that could conflict with other plugins
+
+**Problematic:**
+```php
+define('_WP_VIDEO_TESTIMONIAL_', __FILE__);
+define('PLUGIN_VERSION', '1.0.0');
+```
+
+**Report Format:**
+```
+ISSUE: Generic constant definition
+FILE: [path]
+LINE: [number]
+CODE: [define statement]
+FIX: Use unique prefix: define('YOURPREFIX_CONSTANT_NAME', ...)
+```
+
+---
+
+### 20. SETTING DEFAULT TIMEZONE
+
+**What to Check:**
+- `date_default_timezone_set()` calls
+- WordPress expects UTC timezone
+
+**Problematic:**
+```php
+date_default_timezone_set('Asia/Dhaka');
+date_default_timezone_set(get_option('timezone_string'));
+```
+
+**Report Format:**
+```
+ISSUE: Setting default timezone
+FILE: [path]
+LINE: [number]
+CODE: [the timezone set call]
+FIX: Remove this call. Use WordPress date/time functions that handle timezone conversion
+```
+
+---
+
+### 21. INCLUDING LIBRARIES ALREADY IN WORDPRESS CORE
+
+**What to Check:**
+- jQuery loaded from external CDN
+- Libraries that WordPress already includes
+- Duplicate library files
+
+**Problematic:**
+```php
+<script src="https://code.jquery.com/jquery-3.5.1.js"></script>
+<script src="https://cdn.datatables.net/..."></script>
+```
+
+**Report Format:**
+```
+ISSUE: Including library already in WordPress core
+FILE: [path]
+LINE: [number]
+LIBRARY: [name]
+FIX: Use wp_enqueue_script('[handle]') for core libraries
+```
+
+---
+
+### 22. CALLING REMOTE FILES/RESOURCES
+
+**What to Check:**
+- External CDN calls for CSS/JS (except fonts)
+- Remote image loading
+- External API calls that should be local
+
+**Problematic (NOT permitted):**
+```php
+src="https://cdn.datatables.net/..."
+href="https://cdn.example.com/style.css"
+<img src="https://yourserver.com/image.png">
+```
+
+**Permitted:**
+- Google Fonts (GPL compatible)
+- API calls for services (Akismet-like)
+- oEmbed calls (YouTube, Twitter)
+
+**Report Format:**
+```
+ISSUE: Calling files remotely
+FILE: [path]
+LINE: [number]
+URL: [the remote URL]
+FIX: Include the file locally in your plugin
+```
+
+---
+
+### 23. TRADEMARK INFRINGEMENT IN DISPLAY NAME
+
+**What to Check:**
+- Plugin display name starting with trademarked terms
+- Trademarked company names at the beginning (Google, Facebook, Microsoft, etc.)
+
+**Problematic:**
+```
+=== Google Spreadsheet to WP Table ===
+=== Facebook Login for WordPress ===
+```
+
+**Correct:**
+```
+=== Spreadsheets from Google to WP Table ===
+=== Social Login with Facebook Support ===
+```
+
+**Report Format:**
+```
+ISSUE: Display name infringes on trademarks
+FILE: readme.txt
+LINE: 1
+CURRENT NAME: [name]
+TRADEMARKED TERM: [term]
+SUGGESTED FIX: [alternative name]
+```
+
+---
+
+### 24. INCORRECT STABLE TAG
+
+**What to Check:**
+- `Stable tag:` in readme.txt
+- `Version:` in main plugin file header
+- These must match exactly
+- Should not be "trunk"
+
+**Report Format:**
+```
+ISSUE: Incorrect stable tag
+README STABLE TAG: [value]
+PLUGIN VERSION: [value]
+FIX: Update stable tag in readme.txt to match plugin version
+```
+
+---
+
+### 25. CHANGING OTHER PLUGINS' ACTIVATION STATUS
+
+**What to Check:**
+- `activate_plugin()` calls (except for dependencies)
+- `deactivate_plugins()` for other plugins
+- `Plugin_Upgrader` usage to install/activate other plugins
+
+**Problematic:**
+```php
+activate_plugin($found_path);
+new Plugin_Upgrader($skin);
+```
+
+**Report Format:**
+```
+ISSUE: Changing activation status of other plugins
+FILE: [path]
+LINE: [number]
+CODE: [the problematic call]
+FIX: Use WordPress 6.5+ Plugin Dependencies header instead
+```
+
+---
+
+### 26. UNCLOSED OUTPUT BUFFERING
+
+**What to Check:**
+- `ob_start()` without corresponding `ob_get_clean()`, `ob_end_flush()`, etc.
+- Buffer opened in one function but not closed in same logical flow
+
+**Problematic:**
+```php
+ob_start();
+// ... code without ob_end_* or ob_get_*
+```
+
+**Report Format:**
+```
+ISSUE: Unclosed ob_start()
+FILE: [path]
+LINE: [number]
+FIX: Ensure every ob_start() has a corresponding ob_get_clean() or ob_end_flush() in the same function scope
+```
+
+---
+
+### 27. MISSING OR BYPASSABLE NONCE VERIFICATION
+
+**What to Check:**
+- Form submissions without nonce checks
+- AJAX handlers without nonce verification
+- Nonce checks that can be bypassed (optional checks)
+
+**Problematic Patterns:**
+```php
+// Bypassable - nonce only checked if present
+if ( ! empty( $nonce ) && ! wp_verify_nonce( $nonce, 'action' ) ) {
+    // Only fails if nonce exists AND is invalid
+}
+
+// Missing nonce check entirely
+if (isset($_GET['page'])) {
+    // No nonce verification
+}
+```
+
+**Correct Pattern:**
+```php
+// Fail if nonce missing OR invalid
+if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( $_POST['nonce'], 'action' ) ) {
+    wp_die('Security check failed');
+}
+```
+
+**Report Format:**
+```
+ISSUE: Missing or bypassable nonce verification
+FILE: [path]
+LINE: [number]
+CODE: [the problematic nonce check or missing check]
+VULNERABILITY: [explain how it can be bypassed]
+FIX: Use proper nonce verification that fails if nonce is missing
+```
+
+---
+
+### 28. MISSING USER CAPABILITY CHECKS
+
+**What to Check:**
+- Admin actions without `current_user_can()` checks
+- AJAX handlers without permission verification
+- Settings pages without capability checks
+
+**Problematic:**
+```php
+// AJAX handler without permission check
+add_action('wp_ajax_my_action', function() {
+    // Dangerous action without current_user_can()
+});
+```
+
+**Report Format:**
+```
+ISSUE: Missing user capability check
+FILE: [path]
+LINE: [number]
+ACTION: [the action being performed]
+FIX: Add current_user_can('capability') check before performing action
+```
+
+---
+
+### 29. KEYWORD STUFFING IN README
+
+**What to Check:**
+- Excessive keywords in plugin description
+- Irrelevant tags
+- SEO manipulation attempts
+
+**Report Format:**
+```
+ISSUE: Keyword stuffing in readme.txt
+LOCATION: [section]
+EVIDENCE: [the stuffed content]
+```
+
+---
+
+### 30. ALLOWING ARBITRARY CSS/JS/PHP INSERTION
+
+**What to Check:**
+- Features allowing users to save custom CSS code
+- Features allowing users to paste arbitrary JavaScript
+- Features allowing users to input/execute custom PHP code
+- Text areas or editors for code input that gets executed
+- "Custom Code" or "Custom Scripts" functionality
+
+**Problematic Patterns:**
+```php
+// Saving arbitrary CSS
+update_option('plugin_custom_css', $_POST['custom_css']);
+<style><?php echo get_option('custom_css'); ?></style>
+
+// Allowing JS insertion
+update_option('plugin_custom_js', $_POST['custom_js']);
+<script><?php echo get_option('custom_script'); ?></script>
+
+// PHP execution
+eval($_POST['custom_php']);
+$code = get_option('custom_php_code');
+
+// Settings fields for code
+add_settings_field('custom_css', 'Custom CSS', ...);
+<textarea name="custom_javascript">
+```
+
+**Why This Is Prohibited:**
+1. WordPress has a built-in CSS editor in the Customizer
+2. Arbitrary script insertion is dangerous and requires expert-level security knowledge
+3. Replicating core WordPress functionality creates security risks
+4. Users shouldn't be expected to write code
+
+**Correct Approach:**
+- Instead of asking for JavaScript code, ask for specific values (API keys, IDs, etc.) and generate the script programmatically
+- For customizations, provide form fields/options instead of code input
+- Use the WordPress Customizer for CSS customizations
+- Never allow arbitrary PHP execution
+
+**Report Format:**
+```
+ISSUE: Allowing arbitrary script/code insertion
+FILE: [path]
+LINE: [number]
+TYPE: [CSS/JavaScript/PHP]
+CODE: [the feature allowing code input]
+RISK: [explain the security concern]
+FIX: Remove this feature. For CSS, direct users to WordPress Customizer. For JS, collect specific values via form fields and generate code programmatically. Never allow PHP input.
+```
+
+---
+
+### 31. UNAUTHORIZED POWERED BY / CREDIT LINKS
+
+**What to Check:**
+- "Powered by" text on user-facing (frontend) pages
+- Credit links displayed without explicit opt-in
+- Attribution in footers, widgets, or visible plugin output
+- Links back to plugin developer's website on frontend
+
+**Problematic Patterns:**
+```php
+// In frontend output
+<span>Powered by <a href="https://example.com">Plugin Name</a></span>
+<div class="credits">Made with ❤️ by Developer</div>
+<p class="plugin-credit">Built by <a href="...">Company</a></p>
+
+// React/JSX
+<span className="footer-text">Powered by <a href="https://example.com" target="_blank">Service</a></span>
+
+// Automatic credit insertion
+echo '<div class="powered-by">Powered by ' . PLUGIN_NAME . '</div>';
+```
+
+**What Is Allowed:**
+- Attribution in admin-facing areas (plugin settings pages)
+- Attribution in source code comments (required for GPL)
+- Serviceware embeds (Twitter, YouTube, Disqus) showing their own branding
+- Credit links with EXPLICIT opt-in (user must check a box to enable)
+
+**What Is NOT Allowed:**
+- Any frontend attribution without explicit user consent
+- Pre-checked boxes for showing credits (must be opt-in, not opt-out)
+- Credits that appear by default
+- Hidden or hard-to-remove attribution
+
+**Correct Implementation (if offering optional attribution):**
+```php
+// In settings - unchecked by default
+<label>
+    <input type="checkbox" name="show_credit" value="1" 
+           <?php checked(get_option('show_credit'), 1); ?>>
+    Display "Powered by" credit on my site (optional)
+</label>
+
+// Only show if explicitly enabled
+if (get_option('show_credit') === '1') {
+    echo '<span>Powered by Plugin</span>';
+}
+```
+
+**Report Format:**
+```
+ISSUE: Unauthorized powered by / credit link
+FILE: [path]
+LINE: [number]
+CODE: [the credit/attribution code]
+LOCATION: [frontend/user-facing]
+FIX: Remove credit from frontend, OR implement explicit opt-in checkbox (unchecked by default) in plugin settings
+```
+
+---
+
+## OUTPUT FORMAT
+
+For each scan, provide results in this format:
+
+```
+=====================================================
+WORDPRESS PLUGIN COMPLIANCE SCAN REPORT
+Plugin: [Plugin Name]
+Scan Date: [Date]
+=====================================================
+
+CRITICAL ISSUES (Security Vulnerabilities):
+-------------------------------------------
+[List all security-related issues]
+
+HIGH PRIORITY ISSUES (Will cause rejection):
+--------------------------------------------
+[List all compliance issues]
+
+MEDIUM PRIORITY ISSUES (Should fix):
+------------------------------------
+[List all other issues]
+
+SUMMARY:
+--------
+Total Issues Found: [number]
+- Critical: [number]
+- High: [number]
+- Medium: [number]
+
+Files Scanned: [number]
+=====================================================
+```
+
+---
+
+## IMPORTANT NOTES FOR AI MODELS
+
+1. **Only report actual issues found** - Do not list passing checks
+2. **Provide exact locations** - File path and line number for every issue
+3. **Show evidence** - Include the actual code snippet that's problematic
+4. **Prioritize security** - SQL injection, XSS, CSRF issues are critical
+5. **Check vendor/third-party directories** - Note if issues are in vendor code (some are acceptable)
+6. **Consider context** - Some patterns are acceptable in certain contexts
+7. **Be thorough** - Scan ALL PHP, JS, and CSS files, plus readme.txt and composer.json
+8. **Check both minified and source** - If source exists, verify it matches minified
+
+---
+
+## QUICK REFERENCE - SEARCH PATTERNS
+
+```bash
+# Security Issues
+grep -rn "new mysqli\|new PDO" --include="*.php"
+grep -rn '\$wpdb->query.*\$\|->get_results.*\$' --include="*.php"
+grep -rn '\$_POST\[\|\$_GET\[\|\$_REQUEST\[\|\$_SERVER\[' --include="*.php"
+grep -rn 'echo \$\|print \$' --include="*.php"
+
+# Core File Access
+grep -rn "ABSPATH.*include\|ABSPATH.*require" --include="*.php"
+grep -rn "wp-load.php\|wp-config.php\|wp-blog-header.php" --include="*.php"
+
+# Escaping Issues
+grep -rn "echo \$\|print_r(\$\|var_dump(\$" --include="*.php"
+
+# Direct Output
+grep -rn '<script src=\|<link href=' --include="*.php"
+
+# Remote Calls
+grep -rn 'curl_init\|curl_exec' --include="*.php"
+grep -rn 'https://cdn\.\|https://code\.' --include="*.php"
+
+# Constants and Prefixes
+grep -rn "^define\(" --include="*.php"
+grep -rn "update_option\|set_transient" --include="*.php"
+
+# Nonce Issues
+grep -rn "wp_verify_nonce" --include="*.php"
+grep -rn "wp_ajax_\|wp_ajax_nopriv_" --include="*.php"
+
+# Direct File Access
+grep -rL "defined.*ABSPATH" --include="*.php"
+
+# Custom CSS/JS/PHP Insertion (NEW)
+grep -rn "custom_css\|custom_js\|custom_javascript\|custom_php\|custom_script\|custom_code" --include="*.php"
+grep -rn "eval(\|exec(\|create_function(" --include="*.php"
+grep -rn '<textarea.*css\|<textarea.*javascript\|<textarea.*php' --include="*.php"
+grep -rn "wp_add_inline_style.*get_option\|wp_add_inline_script.*get_option" --include="*.php"
+
+# Powered By / Credit Links (NEW)
+grep -rn "Powered by\|powered-by\|poweredby\|credit-link\|plugin-credit" --include="*.php" --include="*.jsx" --include="*.js"
+grep -rn "Made with\|Built by\|Developed by\|Created by" --include="*.php" --include="*.jsx" --include="*.js"
+grep -rn "footer-text\|footer-credit\|attribution" --include="*.php" --include="*.jsx" --include="*.js"
+```
+
+---
+
+## USAGE INSTRUCTION
+
+To use this prompt:
+
+1. Copy this entire prompt to an AI model
+2. Provide the plugin codebase (upload files or paste code)
+3. Ask the AI to "Scan this plugin for WordPress.org compliance issues"
+4. Review the report for issues that need fixing
+
+The AI will systematically check each category and report only the issues found, with exact locations and recommended fixes.

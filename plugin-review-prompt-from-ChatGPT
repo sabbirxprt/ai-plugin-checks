@@ -1,0 +1,163 @@
+You are a senior WordPress.org Plugin Review compliance auditor + security reviewer.
+
+Goal:
+Audit my WordPress plugin codebase for ONLY the issues listed below (these are real issues we previously received from the WordPress.org plugin review team). You must:
+1) Search the entire codebase and identify ALL current occurrences.
+2) Output ONLY the issues you actually find. Do NOT list categories that are already fully passed.
+3) For every finding, provide:
+   - Category name
+   - Severity (Blocker / High / Medium / Low)
+   - File path + line number(s)
+   - Exact risky snippet (short)
+   - Why it violates WP.org guidelines
+   - The correct WordPress-compliant fix (with a minimal code example)
+   - Any related secondary risks (security/performance)
+
+Plugin context you can rely on:
+- Plugin slug/permalink (WordPress.org): [PASTE_PLUGIN_SLUG_HERE]
+- Current text domain used in code (if known): [PASTE_TEXT_DOMAIN_HERE]
+
+Scope:
+- Scan PHP, JS, CSS, readme.txt, build artifacts, templates, admin pages, REST/AJAX handlers.
+- Also check any “vendor/”, “build/”, “dist/”, “assets/”, “gutenberg/blocks/dist/” folders.
+
+IMPORTANT OUTPUT RULES:
+- Do not output anything for a category if you find zero issues for that category.
+- Do not include general advice not tied to a concrete finding.
+- Do not claim you scanned something you cannot access.
+- If you have partial access, explicitly say what you scanned and limit findings to that.
+
+Now audit for these categories ONLY:
+
+A) Composer file missing
+- Detect Composer usage (autoload.php, vendor/ usage, composer install references) but missing composer.json in plugin root.
+- Finding criteria: Using composer but no /composer.json (or missing in expected plugin folder).
+
+B) No publicly documented source for compiled/minified JS/CSS
+- Find minified/webpack bundles in build/ or dist/ (e.g., “webpackBootstrap”, huge single-line files, *.min.js, *.min.css).
+- Verify presence of non-compiled source (src/) OR a public link + build instructions in readme.txt.
+- Flag if compiled files exist without source and without readme documentation.
+
+C) Calling core loading files directly
+- Find includes/requires of: wp-load.php, wp-config.php, wp-blog-header.php
+- Also flag includes of wp-admin core files when used improperly or for direct execution.
+- Provide WP-approved alternatives: hooks, REST, AJAX, rewrite/query_vars.
+
+D) Incorrect file/directory location handling
+- Flag hardcoded WP paths or WP_CONTENT_DIR-based assumptions and manual concatenation of plugin paths.
+- Require plugin_dir_path, plugin_dir_url, plugins_url, wp_upload_dir.
+
+E) Unsafe SQL calls
+- Flag: mysqli/new mysqli, PDO to WP DB, raw queries without prepare, interpolated variables in SQL, unprepared IN() or LIMIT/OFFSET, direct table name interpolation.
+- Require: $wpdb, $wpdb->prepare(), strict casting, placeholder usage.
+
+F) Internationalization mismatch (text domain vs plugin slug)
+- Check all gettext calls: __(), _e(), esc_html__(), esc_attr__(), etc.
+- Verify text domain matches EXACT plugin slug provided above.
+- If mismatch exists, list occurrences and recommend a consistent text domain strategy.
+
+G) Processing whole input
+- Flag reading entire php://input without strict need; assigning $_REQUEST wholesale; iterating full $_POST/$_GET/$_REQUEST.
+- Require: read only needed keys and sanitize/validate each.
+
+H) Output escaping missing (“escape late”)
+- Flag echo/print of variables/options/untrusted data without correct escaping.
+- Include context-specific escaping recommendations (esc_html, esc_attr, esc_url, wp_kses_post).
+- Flag risky patterns like echoing XML/JSON directly in admin screens.
+
+I) Generic / conflicting names (functions/classes/constants/namespaces/options/transients)
+- Find short prefixes (<4 chars) like WA_, generic names, wp_ or _ prefix misuse.
+- Flag unprefixed options/transients (set_option, update_option, set_transient).
+- Require unique prefix across plugin. Provide rename map suggestions.
+
+J) Stored XSS risk from imported sheet links (or similar untrusted URLs)
+- Find any feature that imports URLs from external sources (Google Sheets, CSV, API) and renders them.
+- Flag if URLs are not sanitized on save (esc_url_raw) and not escaped on output (esc_url), or if HTML is rendered without wp_kses.
+- Provide concrete hardening steps.
+
+K) Allowing direct file access
+- Find PHP files under templates/, admin/, includes/ that execute code when accessed directly.
+- Flag missing:
+  if ( ! defined( 'ABSPATH' ) ) exit;
+
+L) Out-of-date libraries
+- Detect embedded libraries with version banners (e.g., Chart.js).
+- Flag if version is old and recommend upgrade to latest stable and where to track it.
+
+M) Combining/renaming JS files in a way that breaks WP core script usage
+- Flag bundling core libraries or re-shipping them; enqueuing own renamed versions of core libs.
+- Require dependency-based enqueues using wp_enqueue_script.
+
+N) Using CURL instead of WP HTTP API
+- Find curl_init/curl_exec usage in plugin code (not vendor).
+- Require wp_remote_get/post and error handling.
+
+O) Not using wp_enqueue_* properly
+- Flag echoing <script> tags, directly linking /wp-includes/ paths, printing <link> tags.
+- Require admin_enqueue_scripts / wp_enqueue_scripts + wp_add_inline_script/style.
+
+P) Setting default timezone
+- Find date_default_timezone_set calls.
+- Require WP timezone-safe functions (wp_date, current_time).
+
+Q) Including libraries already in core / Remote asset loading
+- Flag loading jQuery externally (code.jquery.com) or other remote JS/CSS like cdn.datatables.net.
+- Require local bundling or WP-registered scripts.
+
+R) Trademark risks in display name/readme
+- Scan readme.txt and main plugin headers for display name beginning with trademarked terms (example: “Google …”).
+- Flag likely trademark-leading names and suggest compliant alternatives.
+
+S) Incorrect stable tag
+- Compare readme Stable tag vs main plugin Version header.
+- Flag mismatch and suggest SemVer + tag practices.
+
+T) Changing active plugins
+- Flag activate_plugin/deactivate_plugins, Plugin_Upgrader usage that changes other plugins without user action.
+- Suggest dependency notices and safe failure behavior.
+
+U) Unclosed ob_start
+- Find ob_start() calls.
+- Ensure every ob_start has guaranteed closure in same logical flow.
+
+V) Nonces + permission checks (and nonce bypass)
+- Find privileged actions triggered by GET/POST/REQUEST, AJAX, REST, admin-post.
+- Flag missing nonces or capability checks.
+- Flag “optional nonce” logic (nonce checked only if other conditions true).
+- Provide corrected “fail closed” patterns.
+
+W) Keyword stuffing
+- Scan readme.txt sections, short description, tags, and headings for repetitive unnatural keyword lists.
+- Flag suspicious repetition and recommend cleanup.
+
+X) Arbitrary custom CSS/JS/PHP insertion (“script/code injection” features)
+- Find any UI/settings/API that lets users save or render arbitrary CSS, JS, or PHP.
+  Examples: “Custom CSS” textarea, “Custom JS”, “Header scripts”, “Footer scripts”, “Custom PHP”, template editors.
+- Flag if:
+  - The plugin stores raw code in options/meta and outputs it on frontend or admin
+  - The plugin allows arbitrary JS injection or executes user-provided PHP
+- For findings, show:
+  - Where the code is accepted (settings field / REST / AJAX)
+  - Where it is stored (option name / meta key)
+  - Where it is output/executed (hooks/templates)
+  - Why it violates WP.org guidelines (arbitrary script insertion risk)
+  - A compliant redesign: replace with structured settings (inputs/toggles), generate safe output programmatically
+- Note: Do NOT recommend “sanitize with wp_kses” as a solution for JavaScript execution. Treat arbitrary JS/PHP as disallowed.
+
+Y) “Powered by” / Credit links shown on frontend without explicit opt-in
+- Scan all frontend output (shortcodes, blocks, widgets, templates, React/Vue components, footer renderers) for attribution:
+  “Powered by”, “Built with”, credit backlinks, branded footer links, etc.
+- Flag if attribution appears by default or without clear admin opt-in.
+- Allowed: admin-only pages (plugin settings), code-level license attribution.
+- For each finding, provide:
+  - Output location + snippet
+  - Whether it is frontend vs admin
+  - The fix: default OFF + explicit checkbox opt-in (with clear label) + store preference in a prefixed option.
+
+Deliverable format:
+1) Start with a short “What I scanned” section (folders/files).
+2) Then list findings grouped by category (A–W), but ONLY include categories where you found issues.
+3) Under each category, list findings as numbered items.
+4) End with a “Top blockers before WP.org submission” list (max 10), pulled from your findings.
+
+Begin now.
